@@ -3,6 +3,49 @@ import numpy as np
 import pyrealsense2 as rs
 import apriltag
 import math
+import pyttsx3
+# from openal import *
+
+def play_audio_at_position(point):
+    oalInit()
+
+    try:
+        source = oalOpen("./new_beep.wav")
+    except Exception as e:
+        print(f"Failed to load new_beep.wav: {e}")
+        oalQuit()
+        return
+
+    listener = oalGetListener()
+    listener.set_position([0, 0, 0])
+
+    px = point[0] * 10 / 640 - 5
+    py = point[0] * 10 / 480 - 5
+
+    position = (px, py, 5)
+
+    source.set_position(position)
+
+    source.play()
+
+    while source.get_state() == AL_PLAYING:
+        continue
+
+    oalQuit()
+
+def line_to_polar(x1, y1, x2, y2):
+    # Calculate the slope (m) and y-intercept (b) of the line
+    dx = x2 - x1
+    dy = y2 - y1
+    m = dy / dx
+    b = y1 - m * x1
+
+    # Calculate theta (angle in radians)
+    theta = np.arctan(m)
+
+    # Calculate rho (distance from origin to the line)
+    rho = np.abs(b) / np.sqrt(1 + m**2)
+    return rho, theta
 
 def fit_line_and_display(points):
     points = np.array(points, dtype=np.float32).reshape((-1, 1, 2))
@@ -10,16 +53,34 @@ def fit_line_and_display(points):
     [vx, vy, x, y] = cv2.fitLine(points, cv2.DIST_L2, 0, 0.01, 0.01)
 
     slope = vy / vx
-    angle_radians = math.atan(slope)
-    angle_degrees = math.degrees(angle_radians)
+    # angle_radians = math.atan(slope)
+    # angle_degrees = math.degrees(angle_radians)
+
+    
+    # if shoe_angle < 0:
+    #     shoe_angle = -shoe_angle
+    # print(feedback_angle)
 
     x0 = 0
     y0 = int(y - (x * slope))
     x1 = 500
     y1 = int(y + ((500 - x) * slope))
 
-    return (x0, y0), (x1, y1), angle_degrees
+    x = int(-1 * y0 / slope)
 
+    # delta_x = x1 - x0
+    # delta_y = y1 - y0
+    # angle_radians = math.atan2(delta_y, delta_x)
+    _, theta = line_to_polar(x0, y0, x1, y1)
+    # theta -= np.pi
+
+    angle_degrees = math.degrees(theta)
+    if angle_degrees < 0:
+        angle_degrees = -angle_degrees
+    else:
+        angle_degrees = 180 - angle_degrees
+        
+    return (x0, y0), (x1, y1), angle_degrees
 
 def find_best_split(frame):
     total_ones = np.sum(frame)
@@ -101,6 +162,11 @@ def process_video(input_source, source_type="video"):
         config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
         pipeline.start(config)
     left_shoe_points, right_shoe_points = [], []
+
+    count = 0
+    audio_feedback = True
+    state = "Forward"
+
     while True:
         if source_type == "video":
             ret, frame = cap.read()
@@ -162,18 +228,66 @@ def process_video(input_source, source_type="video"):
                 middle_y = height // 2
                 # Draw the vertical line on the color image
                 # cv2.line(copy_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                cv2.circle(copy_frame, (middle_x, middle_y + n), 5, (0, 255, 0), 2)
+
+                # print((shoe_p1[1] // step) - 2, (shoe_p1[1] // step))
                 
-                if n // step < 3:
+                if (shoe_p1[1] // step) - 7 < n // step < (shoe_p1[1] // step) - 3:
+                    cv2.circle(copy_frame, (middle_x, middle_y + n), 5, (0, 255, 0), 2)
                     points.append((middle_x, middle_y + n))
                         
-            d1, d2, angle_degree = fit_line_and_display(points)
+            d1, d2, feedback_angle = fit_line_and_display(points)
             cv2.line(copy_frame, d1, d2, (255, 0, 0), 2)
 
-            if angle_degree < 0:
-                print("Right")
-            elif angle_degree < 60:
-                print("Left")
+            p1_middle = ((left_shoe_points[0][0] + right_shoe_points[0][0]) // 2, (left_shoe_points[0][1] + right_shoe_points[0][1]) // 2)
+            p2_middle = ((left_shoe_points[1][0] + right_shoe_points[1][0]) // 2, (left_shoe_points[1][1] + right_shoe_points[1][1]) // 2)
+
+            # cv2.circle(copy_frame, p1_middle, 2, (0, 255, 0), -1)
+            # cv2.circle(copy_frame, p2_middle, 2, (0, 255, 0), -1)
+
+            delta_x = p1_middle[0] - p2_middle[0]
+            delta_y = p1_middle[1] - p2_middle[1]
+            angle_radians = math.atan2(delta_y, delta_x)
+            shoe_angle = math.degrees(angle_radians)
+            if shoe_angle < 0:
+                shoe_angle = -shoe_angle
+            # print(feedback_angle)
+
+            # shoe_slope = (left_shoe_points[0][1] - left_shoe_points[1][1]) / (left_shoe_points[0][0] - left_shoe_points[1][0])
+            # shoe_angle = math.atan(shoe_slope)
+            # shoe_angle = math.degrees(shoe_angle)
+
+            x = shoe_angle - feedback_angle
+
+            if x > 15:
+                if state != "Right":
+                    print(f"{count}: right")
+                    if audio_feedback:
+                        pyttsx3.speak("right")
+                    state = "Right"
+            elif x < -15:
+                if state != "Left":
+                    print(f"{count}: left")
+                    if audio_feedback:
+                        pyttsx3.speak("left")
+                    state = "Left"
+            else:
+                if state != "Forward":
+                    print(f"{count}: Forward")
+                    if audio_feedback:
+                        pyttsx3.speak("Forward")
+                state = "Forward"
+
+            # print(shoe_angle - feedback_angle)
+
+            # if 70 < feedback_angle < 85:
+            #     print(f"{count}: left")
+            #     count += 1
+            # elif -85 < feedback_angle < -70:
+            #     print(f"{count}: right")
+            #     count += 1
+
+            # print(angle_degrees)
+            # play_audio_at_position(d3)
 
         except:
             print("no")
@@ -184,7 +298,7 @@ def process_video(input_source, source_type="video"):
         # cv2.imshow("blur", blur_image)
         # cv2.imshow('Light Colors', light_colors)
         # cv2.imshow('Dark Colors', dar_colors)
-        cv2.imshow('Binary Map', binary_frame)
+        # cv2.imshow('Binary Map', binary_frame)
 
         # Exit if the user presses the 'q' key
         if cv2.waitKey(20) & 0xFF == ord("q"):
@@ -199,7 +313,7 @@ def process_video(input_source, source_type="video"):
 
 if __name__ == "__main__":
     input_source = "april.mp4"  # Change this to your video file path or to 'realsense' to use the RealSense camera
-    source_type = "video"  # Set this to 'video' for a video file or 'realsense' for RealSense camera
-    # source_type = 'realsense'  # Set this to 'video' for a video file or 'realsense' for RealSense camera
+    # source_type = "video"  # Set this to 'video' for a video file or 'realsense' for RealSense camera
+    source_type = 'realsense'  # Set this to 'video' for a video file or 'realsense' for RealSense camera
 
     process_video(input_source, source_type)
