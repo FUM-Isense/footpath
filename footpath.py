@@ -4,7 +4,16 @@ import pyrealsense2 as rs
 import apriltag
 import math
 import pyttsx3
+import threading
 # from openal import *
+
+speech_lock = threading.Lock()
+engine = pyttsx3.init()
+
+def speak_async(text):
+    with speech_lock:
+        engine.say(text)
+        engine.runAndWait()
 
 def play_audio_at_position(point):
     oalInit()
@@ -71,11 +80,11 @@ def fit_line_and_display(points):
     # delta_x = x1 - x0
     # delta_y = y1 - y0
     # angle_radians = math.atan2(delta_y, delta_x)
-    _, theta = line_to_polar(x0, y0, x1, y1)
+    rho, theta = line_to_polar(x0, y0, x1, y1)
     # theta -= np.pi
 
     angle_degrees = math.degrees(theta)
-    if angle_degrees < 0:
+    if angle_degrees < 0:   
         angle_degrees = -angle_degrees
     else:
         angle_degrees = 180 - angle_degrees
@@ -152,7 +161,6 @@ def process_frame(frame):
 
     return light_colors, dark_colors, binary_map
 
-
 def process_video(input_source, source_type="video"):
     if source_type == "video":
         cap = cv2.VideoCapture(input_source)
@@ -165,7 +173,7 @@ def process_video(input_source, source_type="video"):
 
     count = 0
     audio_feedback = True
-    state = "Forward"
+    state = "None"
 
     while True:
         if source_type == "video":
@@ -208,6 +216,7 @@ def process_video(input_source, source_type="video"):
         step = 30
         try:
             points = [shoe_p1]
+            first_point = shoe_p1
             for n in range(0, shoe_p1[1] - step, step):
                 light_colors, dark_colors, binary_frame = process_frame(frame[n:n+step,:])
                 
@@ -230,9 +239,17 @@ def process_video(input_source, source_type="video"):
                 # cv2.line(copy_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
 
                 # print((shoe_p1[1] // step) - 2, (shoe_p1[1] // step))
+
+                # print(n, shoe_p1[1], step)
+
+                cv2.circle(copy_frame, (middle_x, middle_y + n), 5, (0, 255, 0), 2)
+
+                if n + step >= shoe_p1[1] - step:
+                    cv2.circle(copy_frame, (middle_x, middle_y + n), 5, (0, 0, 255), 2)
+                    first_point = (middle_x, middle_y + n)
                 
                 if (shoe_p1[1] // step) - 7 < n // step < (shoe_p1[1] // step) - 3:
-                    cv2.circle(copy_frame, (middle_x, middle_y + n), 5, (0, 255, 0), 2)
+                    cv2.circle(copy_frame, (middle_x, middle_y + n), 5, (255, 0, 0), 2)
                     points.append((middle_x, middle_y + n))
                         
             d1, d2, feedback_angle = fit_line_and_display(points)
@@ -256,38 +273,33 @@ def process_video(input_source, source_type="video"):
             # shoe_angle = math.atan(shoe_slope)
             # shoe_angle = math.degrees(shoe_angle)
 
-            x = shoe_angle - feedback_angle
+            angle_difference = shoe_angle - feedback_angle
+            angle_tolerance = 15
 
-            if x > 15:
-                if state != "Right":
-                    print(f"{count}: right")
-                    if audio_feedback:
-                        pyttsx3.speak("right")
-                    state = "Right"
-            elif x < -15:
-                if state != "Left":
-                    print(f"{count}: left")
-                    if audio_feedback:
-                        pyttsx3.speak("left")
-                    state = "Left"
+            if count > 15:
+                if angle_difference > angle_tolerance:
+                    if state != "Rotate Right":
+                        print("Rotate Right")
+                        if audio_feedback:
+                            threading.Thread(target=speak_async, args=("Right",)).start()
+                        state = "Rotate Right"
+                        count = 0
+                elif angle_difference < -angle_tolerance:
+                    if state != "Rotate Left":
+                        print("Rotate Left")
+                        if audio_feedback:
+                            threading.Thread(target=speak_async, args=("Left",)).start()
+                        state = "Rotate Left"
+                        count = 0
+                elif abs(angle_difference) < 5:
+                    if state != "Forward":
+                        print("Forward")
+                        if audio_feedback:
+                            threading.Thread(target=speak_async, args=("Forward",)).start()
+                        state = "Forward"
+                        count = 0
             else:
-                if state != "Forward":
-                    print(f"{count}: Forward")
-                    if audio_feedback:
-                        pyttsx3.speak("Forward")
-                state = "Forward"
-
-            # print(shoe_angle - feedback_angle)
-
-            # if 70 < feedback_angle < 85:
-            #     print(f"{count}: left")
-            #     count += 1
-            # elif -85 < feedback_angle < -70:
-            #     print(f"{count}: right")
-            #     count += 1
-
-            # print(angle_degrees)
-            # play_audio_at_position(d3)
+                count += 1
 
         except:
             print("no")
@@ -301,7 +313,7 @@ def process_video(input_source, source_type="video"):
         # cv2.imshow('Binary Map', binary_frame)
 
         # Exit if the user presses the 'q' key
-        if cv2.waitKey(20) & 0xFF == ord("q"):
+        if cv2.waitKey(8) & 0xFF == ord("q"):
             break
 
     if source_type == "video":
