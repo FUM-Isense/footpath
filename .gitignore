@@ -7,3 +7,7 @@ subscriber.py
 test2.py
 __pycache__/task7.cpython-310.pyc
 recordings/output0.mp4
+audio.py
+new_beep.wav
+task7_offline.py
+task7_online.py
