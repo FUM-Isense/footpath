@@ -1,4 +1,4 @@
-# Footpath
+## Footpath
 
 #### Contributors:  [Mohammad Reza Ramezani](https://github.com/redHaunter) - [Kimia Mahdinezhad](https://github.com/kimia-mahdinezhad)
 
